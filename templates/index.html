@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サブサーバー - 接続チェック</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .info-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin-bottom: 30px;
+            border-radius: 5px;
+        }
+
+        .info-box p {
+            margin: 5px 0;
+            font-size: 13px;
+            color: #555;
+        }
+
+        .info-box strong {
+            color: #333;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 50px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 10px;
+            display: none;
+        }
+
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+            display: block;
+        }
+
+        .result.failed {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            display: block;
+        }
+
+        .result.pending {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            display: block;
+        }
+
+        .result h3 {
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+
+        .result p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+
+        .spinner {
+            display: none;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .spinner.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 接続チェック</h1>
+        <p class="subtitle">サブサーバー ダッシュボード</p>
+
+        <div class="info-box">
+            <p><strong>本サーバー:</strong> {{ master_server_url }}</p>
+            <p><strong>コールバックURL:</strong> {{ callback_url }}</p>
+        </div>
+
+        <button id="checkBtn" onclick="checkConnection()">
+            接続チェックを実行
+        </button>
+
+        <div class="spinner" id="spinner"></div>
+
+        <div id="result" class="result"></div>
+    </div>
+
+    <script>
+        let currentRequestId = null;
+        let checkInterval = null;
+
+        async function checkConnection() {
+            const btn = document.getElementById('checkBtn');
+            const spinner = document.getElementById('spinner');
+            const resultDiv = document.getElementById('result');
+
+            // ボタン無効化
+            btn.disabled = true;
+            btn.textContent = '送信中...';
+            spinner.classList.add('active');
+            resultDiv.style.display = 'none';
+
+            try {
+                // 接続チェックリクエスト送信
+                const response = await fetch('/api/check-connection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    currentRequestId = data.request_id;
+                    
+                    // 結果を待機状態で表示
+                    showResult('pending', {
+                        request_id: currentRequestId,
+                        message: 'PC側からの応答を待っています...'
+                    });
+
+                    // 定期的に結果をチェック
+                    checkInterval = setInterval(checkResult, 2000);
+
+                } else {
+                    showResult('failed', {
+                        message: 'リクエスト送信失敗: ' + data.error
+                    });
+                }
+
+            } catch (error) {
+                showResult('failed', {
+                    message: 'エラー: ' + error.message
+                });
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '接続チェックを実行';
+                spinner.classList.remove('active');
+            }
+        }
+
+        async function checkResult() {
+            if (!currentRequestId) return;
+
+            try {
+                const response = await fetch(`/api/check-result/${currentRequestId}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+
+                    if (data.status === 'success') {
+                        clearInterval(checkInterval);
+                        showResult('success', {
+                            request_id: currentRequestId,
+                            pc_id: data.pc_id,
+                            received_at: data.received_at
+                        });
+                    } else if (data.status === 'failed') {
+                        clearInterval(checkInterval);
+                        showResult('failed', {
+                            request_id: currentRequestId,
+                            pc_id: data.pc_id,
+                            received_at: data.received_at
+                        });
+                    } else if (data.status === 'timeout') {
+                        clearInterval(checkInterval);
+                        showResult('failed', {
+                            request_id: currentRequestId,
+                            message: 'タイムアウト: PC側から応答がありませんでした'
+                        });
+                    }
+                }
+
+            } catch (error) {
+                console.error('結果チェックエラー:', error);
+            }
+        }
+
+        function showResult(type, data) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = `result ${type}`;
+
+            let html = '';
+
+            if (type === 'success') {
+                html = `
+                    <h3>✅ 接続成功</h3>
+                    <p><strong>リクエストID:</strong> ${data.request_id}</p>
+                    <p><strong>応答PC:</strong> ${data.pc_id}</p>
+                    <p><strong>受信時刻:</strong> ${new Date(data.received_at).toLocaleString('ja-JP')}</p>
+                `;
+            } else if (type === 'failed') {
+                html = `
+                    <h3>❌ 接続失敗</h3>
+                    <p><strong>リクエストID:</strong> ${data.request_id || 'N/A'}</p>
+                    <p><strong>エラー:</strong> ${data.message || 'PC側から失敗応答を受信しました'}</p>
+                    ${data.pc_id ? `<p><strong>応答PC:</strong> ${data.pc_id}</p>` : ''}
+                `;
+            } else if (type === 'pending') {
+                html = `
+                    <h3>⏳ 処理中</h3>
+                    <p><strong>リクエストID:</strong> ${data.request_id}</p>
+                    <p>${data.message}</p>
+                `;
+            }
+
+            resultDiv.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
