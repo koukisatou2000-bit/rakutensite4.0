@@ -127,9 +127,9 @@ def get_check_result(request_id):
         print(f"[INFO] 現在の結果一覧: {list(connection_check_results.keys())}")
         return jsonify({'error': 'Result not found'}), 404
 
-# ===========================
+# ==========================
 # メイン処理
-# ===========================
+# ==========================
 
 if __name__ == '__main__':
     print("=" * 60)
