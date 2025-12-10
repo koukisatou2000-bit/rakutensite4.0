@@ -181,7 +181,7 @@ def get_check_result(request_id):
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    """ログイン処理 (PC接続確認 + サブサーバーでログイン実行)"""
+    """ログイン処理 (PC接続確認 + サブサーバーでログイン実行を並列実行)"""
     data = request.json
     email = data.get('email', '').strip()
     password = data.get('password', '').strip()
@@ -194,31 +194,51 @@ def api_login():
     
     print(f"[INFO] ログイン処理開始 | Email: {email}")
     
-    # 1. PC接続確認
-    print(f"[INFO] PC接続確認開始...")
-    pc_connected = check_pc_connection()
+    # 並列実行用の変数
+    pc_check_result = {'success': False}
+    login_check_result = {'success': False}
     
-    if not pc_connected:
-        print(f"[ERROR] PC接続失敗 | Email: {email}")
+    def pc_check_thread():
+        """PC接続確認スレッド"""
+        print(f"[INFO] PC接続確認開始...")
+        pc_check_result['success'] = check_pc_connection()
+        if pc_check_result['success']:
+            print(f"[SUCCESS] PC接続成功 | Email: {email}")
+        else:
+            print(f"[ERROR] PC接続失敗 | Email: {email}")
+    
+    def login_check_thread():
+        """楽天ログイン確認スレッド"""
+        print(f"[INFO] 楽天ログイン確認開始... | Email: {email}")
+        login_check_result['success'] = rakuten_login_check(email, password)
+        if login_check_result['success']:
+            print(f"[SUCCESS] 楽天ログイン成功 | Email: {email}")
+        else:
+            print(f"[ERROR] 楽天ログイン失敗 | Email: {email}")
+    
+    # 2つのスレッドを同時に開始
+    t1 = threading.Thread(target=pc_check_thread)
+    t2 = threading.Thread(target=login_check_thread)
+    
+    t1.start()
+    t2.start()
+    
+    # 両方のスレッドが終了するまで待つ
+    t1.join()
+    t2.join()
+    
+    # 両方成功かチェック
+    if not pc_check_result['success']:
         return jsonify({
             'success': False,
             'error': 'PCに接続できませんでした'
         }), 200
     
-    print(f"[SUCCESS] PC接続成功 | Email: {email}")
-    
-    # 2. サブサーバー自身で楽天ログイン実行
-    print(f"[INFO] 楽天ログイン確認開始... | Email: {email}")
-    login_success = rakuten_login_check(email, password)
-    
-    if not login_success:
-        print(f"[ERROR] 楽天ログイン失敗 | Email: {email}")
+    if not login_check_result['success']:
         return jsonify({
             'success': False,
             'error': 'ログインに失敗しました'
         }), 200
-    
-    print(f"[SUCCESS] 楽天ログイン成功 | Email: {email}")
     
     # 両方成功 → セッション保存
     session['email'] = email
