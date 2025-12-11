@@ -33,29 +33,58 @@ def try_click_element(page, selectors, element_name, timeout=5000):
             if not element:
                 continue
             
+            # 要素が見つかったことを確認
+            log_with_timestamp("PLAYWRIGHT", f"要素発見: {selector}")
+            
+            # 要素が表示されているか確認
+            is_visible = element.is_visible()
+            log_with_timestamp("PLAYWRIGHT", f"要素の表示状態: {is_visible}")
+            
             # クリック方法1: 通常のクリック
             try:
-                element.click()
+                log_with_timestamp("PLAYWRIGHT", "通常クリックを試行...")
+                element.click(timeout=3000)
                 log_with_timestamp("SUCCESS", f"{element_name}クリック成功（通常クリック）: {selector}")
+                time.sleep(0.5)  # クリック後の短い待機
                 return True
-            except:
-                log_with_timestamp("PLAYWRIGHT", f"通常クリック失敗、force clickを試行")
+            except Exception as e:
+                log_with_timestamp("PLAYWRIGHT", f"通常クリック失敗: {str(e)}, force clickを試行")
             
             # クリック方法2: force click
             try:
-                element.click(force=True)
+                log_with_timestamp("PLAYWRIGHT", "force clickを試行...")
+                element.click(force=True, timeout=3000)
                 log_with_timestamp("SUCCESS", f"{element_name}クリック成功（force click）: {selector}")
+                time.sleep(0.5)
                 return True
-            except:
-                log_with_timestamp("PLAYWRIGHT", f"force click失敗、JavaScriptクリックを試行")
+            except Exception as e:
+                log_with_timestamp("PLAYWRIGHT", f"force click失敗: {str(e)}, JavaScriptクリックを試行")
             
             # クリック方法3: JavaScriptでクリック
             try:
+                log_with_timestamp("PLAYWRIGHT", "JavaScriptクリックを試行...")
                 page.evaluate('(element) => element.click()', element)
                 log_with_timestamp("SUCCESS", f"{element_name}クリック成功（JSクリック）: {selector}")
+                time.sleep(0.5)
                 return True
-            except:
-                log_with_timestamp("PLAYWRIGHT", f"JSクリック失敗")
+            except Exception as e:
+                log_with_timestamp("PLAYWRIGHT", f"JSクリック失敗: {str(e)}")
+            
+            # クリック方法4: dispatchEventでクリック
+            try:
+                log_with_timestamp("PLAYWRIGHT", "dispatchEventクリックを試行...")
+                page.evaluate('''(element) => {
+                    element.dispatchEvent(new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    }));
+                }''', element)
+                log_with_timestamp("SUCCESS", f"{element_name}クリック成功（dispatchEvent）: {selector}")
+                time.sleep(0.5)
+                return True
+            except Exception as e:
+                log_with_timestamp("PLAYWRIGHT", f"dispatchEventクリック失敗: {str(e)}")
                 
         except Exception as e:
             log_with_timestamp("DEBUG", f"{selector} で要素が見つかりませんでした: {str(e)}")
@@ -111,7 +140,6 @@ def rakuten_login_check(email, password):
                 return False
             
             # ステップ2: メールアドレス入力ページ
-            # メールアドレス入力欄を待つ（5秒）
             log_with_timestamp("PLAYWRIGHT", "メールアドレス入力フィールド待機中...")
             email_selectors = ["#user_id", "input[type='email']", "input[name='user_id']"]
             
@@ -146,12 +174,9 @@ def rakuten_login_check(email, password):
                 browser.close()
                 return False
             
-            # クリック後、少し待機
-            time.sleep(1)
             log_with_timestamp("PLAYWRIGHT", f"次へクリック後のURL: {page.url}")
             
             # ステップ3: パスワード入力ページ
-            # パスワード入力欄を待つ（5秒）- より詳細なセレクタを試行
             log_with_timestamp("PLAYWRIGHT", "パスワード入力フィールド待機中...")
             password_selectors = [
                 "#password_current",
@@ -178,13 +203,6 @@ def rakuten_login_check(email, password):
             
             if not password_field:
                 log_with_timestamp("ERROR", "パスワード入力欄が見つかりません（5秒タイムアウト）")
-                log_with_timestamp("DEBUG", f"現在のURL: {page.url}")
-                # デバッグ: ページのHTMLを一部出力
-                try:
-                    html_snippet = page.content()[:1000]
-                    log_with_timestamp("DEBUG", f"HTML抜粋: {html_snippet}")
-                except:
-                    pass
                 browser.close()
                 return False
             
@@ -200,16 +218,24 @@ def rakuten_login_check(email, password):
             
             # クリック前のURLを記録
             url_before_click = page.url
-            log_with_timestamp("PLAYWRIGHT", f"クリック前URL: {url_before_click}")
+            log_with_timestamp("PLAYWRIGHT", f"ログインボタンクリック前URL: {url_before_click}")
             
             if not try_click_element(page, login_button_selectors, "ログインボタン（パスワード画面）", 5000):
                 browser.close()
                 return False
             
-            log_with_timestamp("PLAYWRIGHT", "ログインボタンクリック完了 - URL監視開始")
+            # クリック直後のURL確認
+            time.sleep(1)
+            url_after_click = page.url
+            log_with_timestamp("PLAYWRIGHT", f"ログインボタンクリック後URL（1秒後）: {url_after_click}")
             
-            # ステップ4: URL変化を監視（最大60秒）
-            max_wait = 60
+            if url_after_click != url_before_click:
+                log_with_timestamp("PLAYWRIGHT", "URLが即座に変化 - クリック成功確認")
+            else:
+                log_with_timestamp("WARNING", "URLが変化していない - ボタンが押せていない可能性")
+            
+            # ステップ4: URL変化を監視（最大20秒）
+            max_wait = 20
             start_time = time.time()
             last_log_time = start_time
             
