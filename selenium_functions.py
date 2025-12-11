@@ -69,9 +69,35 @@ def rakuten_login_check(email, password):
             next_button_1.click()
             log_with_timestamp("PLAYWRIGHT", "次へボタンクリック完了")
             
-            # ステップ3: パスワード入力ページ
+            # ページ遷移を待つ（URLが変わるまで待機）
+            log_with_timestamp("PLAYWRIGHT", "ページ遷移待機中...")
+            page.wait_for_load_state("networkidle", timeout=15000)
+            log_with_timestamp("PLAYWRIGHT", f"遷移後URL: {page.url}")
+            
+            # ステップ3: パスワード入力ページ（複数のセレクタを試す）
             log_with_timestamp("PLAYWRIGHT", "パスワード入力フィールド待機中...")
-            password_field = page.wait_for_selector("#password_current", timeout=15000)
+            
+            # まず #password_current を試す
+            password_field = None
+            try:
+                password_field = page.wait_for_selector("#password_current", timeout=5000)
+                log_with_timestamp("PLAYWRIGHT", "パスワードフィールド検出: #password_current")
+            except:
+                log_with_timestamp("PLAYWRIGHT", "#password_current が見つからない、別のセレクタを試します...")
+                
+                # 代替セレクタを試す
+                try:
+                    password_field = page.wait_for_selector("input[type='password']", timeout=5000)
+                    log_with_timestamp("PLAYWRIGHT", "パスワードフィールド検出: input[type='password']")
+                except:
+                    log_with_timestamp("ERROR", "パスワードフィールドが見つかりません")
+                    browser.close()
+                    return False
+            
+            if not password_field:
+                log_with_timestamp("ERROR", "パスワードフィールドが見つかりません")
+                browser.close()
+                return False
             password_field.fill(password)
             log_with_timestamp("PLAYWRIGHT", "パスワード入力完了")
             
