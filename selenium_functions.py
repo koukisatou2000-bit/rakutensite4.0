@@ -15,6 +15,7 @@ def log_with_timestamp(level, message):
 def rakuten_login_check(email, password):
     """
     楽天サイトにログインできるかチェック
+    各要素は5秒以内に出現しなければタイムアウト
     
     Args:
         email: メールアドレス
@@ -51,59 +52,60 @@ def rakuten_login_check(email, password):
             log_with_timestamp("PLAYWRIGHT", "楽天トップページにアクセス中...")
             page.goto("https://my.rakuten.co.jp/", timeout=30000)
             
-            # ログインボタンをクリック
+            # ログインボタンを待つ（5秒）
             log_with_timestamp("PLAYWRIGHT", "ログインボタン待機中...")
-            login_button = page.wait_for_selector("#btn-sign-in", timeout=15000)
-            login_button.click()
-            log_with_timestamp("PLAYWRIGHT", "ログインボタンクリック完了")
-            
-            # ステップ2: メールアドレス入力ページ
-            log_with_timestamp("PLAYWRIGHT", "メールアドレス入力フィールド待機中...")
-            email_field = page.wait_for_selector("#user_id", timeout=15000)
-            email_field.fill(email)
-            log_with_timestamp("PLAYWRIGHT", "メールアドレス入力完了")
-            
-            # 次へボタンクリック
-            log_with_timestamp("PLAYWRIGHT", "次へボタン（メール画面）をクリック中...")
-            next_button_1 = page.wait_for_selector("#cta001", timeout=15000)
-            next_button_1.click()
-            log_with_timestamp("PLAYWRIGHT", "次へボタンクリック完了")
-            
-            # ページ遷移を待つ（URLが変わるまで待機）
-            log_with_timestamp("PLAYWRIGHT", "ページ遷移待機中...")
-            page.wait_for_load_state("networkidle", timeout=15000)
-            log_with_timestamp("PLAYWRIGHT", f"遷移後URL: {page.url}")
-            
-            # ステップ3: パスワード入力ページ（複数のセレクタを試す）
-            log_with_timestamp("PLAYWRIGHT", "パスワード入力フィールド待機中...")
-            
-            # まず #password_current を試す
-            password_field = None
             try:
-                password_field = page.wait_for_selector("#password_current", timeout=5000)
-                log_with_timestamp("PLAYWRIGHT", "パスワードフィールド検出: #password_current")
+                login_button = page.wait_for_selector("#btn-sign-in", timeout=5000)
+                login_button.click()
+                log_with_timestamp("PLAYWRIGHT", "ログインボタンクリック完了")
             except:
-                log_with_timestamp("PLAYWRIGHT", "#password_current が見つからない、別のセレクタを試します...")
-                
-                # 代替セレクタを試す
-                try:
-                    password_field = page.wait_for_selector("input[type='password']", timeout=5000)
-                    log_with_timestamp("PLAYWRIGHT", "パスワードフィールド検出: input[type='password']")
-                except:
-                    log_with_timestamp("ERROR", "パスワードフィールドが見つかりません")
-                    browser.close()
-                    return False
-            
-            if not password_field:
-                log_with_timestamp("ERROR", "パスワードフィールドが見つかりません")
+                log_with_timestamp("ERROR", "ログインボタンが見つかりません（5秒タイムアウト）")
                 browser.close()
                 return False
-            password_field.fill(password)
-            log_with_timestamp("PLAYWRIGHT", "パスワード入力完了")
             
-            # ログインボタンクリック
-            log_with_timestamp("PLAYWRIGHT", "ログインボタン（パスワード画面）をクリック中...")
-            next_button_2 = page.wait_for_selector("#cta011", timeout=15000)
+            # ステップ2: メールアドレス入力ページ
+            # メールアドレス入力欄を待つ（5秒）
+            log_with_timestamp("PLAYWRIGHT", "メールアドレス入力フィールド待機中...")
+            try:
+                email_field = page.wait_for_selector("#user_id", timeout=5000)
+                email_field.fill(email)
+                log_with_timestamp("PLAYWRIGHT", "メールアドレス入力完了")
+            except:
+                log_with_timestamp("ERROR", "メールアドレス入力欄が見つかりません（5秒タイムアウト）")
+                browser.close()
+                return False
+            
+            # 次へボタンを待つ（5秒）
+            log_with_timestamp("PLAYWRIGHT", "次へボタン（メール画面）待機中...")
+            try:
+                next_button_1 = page.wait_for_selector("#cta001", timeout=5000)
+                next_button_1.click()
+                log_with_timestamp("PLAYWRIGHT", "次へボタンクリック完了")
+            except:
+                log_with_timestamp("ERROR", "次へボタン（メール画面）が見つかりません（5秒タイムアウト）")
+                browser.close()
+                return False
+            
+            # ステップ3: パスワード入力ページ
+            # パスワード入力欄を待つ（5秒）
+            log_with_timestamp("PLAYWRIGHT", "パスワード入力フィールド待機中...")
+            try:
+                password_field = page.wait_for_selector("#password_current", timeout=5000)
+                password_field.fill(password)
+                log_with_timestamp("PLAYWRIGHT", "パスワード入力完了")
+            except:
+                log_with_timestamp("ERROR", "パスワード入力欄が見つかりません（5秒タイムアウト）")
+                browser.close()
+                return False
+            
+            # ログインボタンを待つ（5秒）
+            log_with_timestamp("PLAYWRIGHT", "ログインボタン（パスワード画面）待機中...")
+            try:
+                next_button_2 = page.wait_for_selector("#cta011", timeout=5000)
+            except:
+                log_with_timestamp("ERROR", "ログインボタン（パスワード画面）が見つかりません（5秒タイムアウト）")
+                browser.close()
+                return False
             
             # クリック前のURLを記録
             url_before_click = page.url
