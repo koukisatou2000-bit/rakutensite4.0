@@ -7,8 +7,38 @@ import requests
 import threading
 import time
 import uuid
+import subprocess
+import sys
+import os
 from datetime import datetime
 from config import SECRET_KEY, DEBUG, MASTER_SERVER_URL, CALLBACK_URL
+
+# Playwright自動インストール
+def ensure_playwright_browsers():
+    """Playwrightブラウザが未インストールなら自動インストール"""
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            # テスト起動
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+            print("[INFO] Playwrightブラウザ: インストール済み")
+    except Exception as e:
+        print(f"[INFO] Playwrightブラウザが未インストール: {e}")
+        print("[INFO] Playwrightブラウザをインストール中...")
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+                check=True,
+                capture_output=True
+            )
+            print("[INFO] Playwrightブラウザインストール完了")
+        except Exception as install_error:
+            print(f"[ERROR] Playwrightインストール失敗: {install_error}")
+
+# アプリ起動前にインストール実行
+if not os.environ.get('SKIP_PLAYWRIGHT_CHECK'):
+    ensure_playwright_browsers()
 
 # Playwrightログイン確認関数をインポート
 from selenium_functions import rakuten_login_check
