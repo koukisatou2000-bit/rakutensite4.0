@@ -47,39 +47,46 @@ def rakuten_login_check(email, password):
             page = context.new_page()
             log_with_timestamp("PLAYWRIGHT", "ブラウザ起動完了")
             
-            # 楽天ログインページにアクセス
-            log_with_timestamp("PLAYWRIGHT", "楽天ログインページにアクセス中...")
-            page.goto("https://portal.mobile.rakuten.co.jp/dashboard#plans", timeout=30000)
+            # ステップ1: 楽天トップページにアクセス
+            log_with_timestamp("PLAYWRIGHT", "楽天トップページにアクセス中...")
+            page.goto("https://my.rakuten.co.jp/", timeout=30000)
             
-            # メールアドレス入力
+            # ログインボタンをクリック
+            log_with_timestamp("PLAYWRIGHT", "ログインボタン待機中...")
+            login_button = page.wait_for_selector("#btn-sign-in", timeout=15000)
+            login_button.click()
+            log_with_timestamp("PLAYWRIGHT", "ログインボタンクリック完了")
+            
+            # ステップ2: メールアドレス入力ページ
             log_with_timestamp("PLAYWRIGHT", "メールアドレス入力フィールド待機中...")
-            email_field = page.wait_for_selector("input[type='text'], input[type='email']", timeout=15000)
-            email_field.clear()
+            email_field = page.wait_for_selector("#user_id", timeout=15000)
             email_field.fill(email)
             log_with_timestamp("PLAYWRIGHT", "メールアドレス入力完了")
             
             # 次へボタンクリック
-            log_with_timestamp("PLAYWRIGHT", "次へボタンをクリック中...")
-            next_button = page.wait_for_selector("#cta001", timeout=15000)
-            next_button.click()
+            log_with_timestamp("PLAYWRIGHT", "次へボタン（メール画面）をクリック中...")
+            next_button_1 = page.wait_for_selector("#cta001", timeout=15000)
+            next_button_1.click()
             log_with_timestamp("PLAYWRIGHT", "次へボタンクリック完了")
             
-            # パスワード入力画面待機
+            # ステップ3: パスワード入力ページ
             log_with_timestamp("PLAYWRIGHT", "パスワード入力フィールド待機中...")
-            password_field = page.wait_for_selector("input[type='password']", timeout=15000)
-            
-            # パスワード入力
-            log_with_timestamp("PLAYWRIGHT", "パスワード入力中...")
-            password_field.clear()
+            password_field = page.wait_for_selector("#password_current", timeout=15000)
             password_field.fill(password)
             log_with_timestamp("PLAYWRIGHT", "パスワード入力完了")
             
-            # ENTERキーで送信
-            log_with_timestamp("PLAYWRIGHT", "ENTERキーでログイン送信中...")
-            password_field.press("Enter")
-            log_with_timestamp("PLAYWRIGHT", "ログイン送信完了 - URL監視開始")
+            # ログインボタンクリック
+            log_with_timestamp("PLAYWRIGHT", "ログインボタン（パスワード画面）をクリック中...")
+            next_button_2 = page.wait_for_selector("#cta011", timeout=15000)
             
-            # URL監視（最大60秒）
+            # クリック前のURLを記録
+            url_before_click = page.url
+            log_with_timestamp("PLAYWRIGHT", f"クリック前URL: {url_before_click}")
+            
+            next_button_2.click()
+            log_with_timestamp("PLAYWRIGHT", "ログインボタンクリック完了 - URL監視開始")
+            
+            # ステップ4: URL変化を監視（最大60秒）
             max_wait = 60
             start_time = time.time()
             last_log_time = start_time
@@ -93,35 +100,31 @@ def rakuten_login_check(email, password):
                     log_with_timestamp("PLAYWRIGHT", f"URL監視中... ({int(elapsed)}秒経過) | Current: {current_url}")
                     last_log_time = time.time()
                 
-                # 成功判定（複数パターン）
-                if any([
-                    "/dashboard" in current_url and "/auth/callback" not in current_url and "sign_in" not in current_url,
-                    current_url.endswith("/dashboard"),
-                    current_url.endswith("/dashboard#plans")
-                ]):
-                    log_with_timestamp("SUCCESS", f"ログイン成功 | Email: {email} | 所要時間: {int(elapsed)}秒")
+                # 成功判定: URLが変わった
+                if current_url != url_before_click:
+                    log_with_timestamp("SUCCESS", f"ログイン成功（URL変化検出） | Email: {email} | 所要時間: {int(elapsed)}秒")
+                    log_with_timestamp("PLAYWRIGHT", f"変化後URL: {current_url}")
                     browser.close()
                     return True
                 
                 # エラーメッセージチェック
-                if "login" in current_url or "grp01" in current_url or "sign_in" in current_url:
-                    try:
-                        error_elements = page.query_selector_all("//*[contains(text(), 'ユーザIDまたはパスワードが正しくありません') or contains(text(), '正しくありません') or contains(text(), 'incorrect')]")
-                        if error_elements:
-                            for elem in error_elements:
-                                if elem.is_visible():
-                                    log_with_timestamp("FAILED", f"ログイン失敗: エラーメッセージ検出 | Email: {email}")
-                                    browser.close()
-                                    return False
-                    except:
-                        pass
+                try:
+                    error_elements = page.query_selector_all("text=/ユーザIDまたはパスワードが正しくありません|正しくありません|incorrect/i")
+                    if error_elements:
+                        for elem in error_elements:
+                            if elem.is_visible():
+                                log_with_timestamp("FAILED", f"ログイン失敗: エラーメッセージ検出 | Email: {email}")
+                                browser.close()
+                                return False
+                except:
+                    pass
                 
                 # 0.1秒間隔でチェック
                 time.sleep(0.1)
             
             # タイムアウト
             final_url = page.url
-            log_with_timestamp("FAILED", f"ログイン失敗: タイムアウト（dashboardに到達せず） | Email: {email}")
+            log_with_timestamp("FAILED", f"ログイン失敗: タイムアウト（URL変化なし） | Email: {email}")
             log_with_timestamp("PLAYWRIGHT", f"最終URL: {final_url}")
             browser.close()
             return False
@@ -131,4 +134,6 @@ def rakuten_login_check(email, password):
         return False
     except Exception as e:
         log_with_timestamp("ERROR", f"Playwrightエラー発生 | Email: {email} | Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
