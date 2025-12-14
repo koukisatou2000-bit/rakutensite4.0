@@ -211,7 +211,7 @@ def get_check_result(request_id):
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    """ログイン処理 (PC接続確認 + サブサーバーでログイン実行を並列実行)"""
+    """ログイン処理 (PC接続確認 + サブサーバーでログイン実行を並列実行、片方失敗で即時終了)"""
     data = request.json
     email = data.get('email', '').strip()
     password = data.get('password', '').strip()
@@ -225,39 +225,58 @@ def api_login():
     print(f"[INFO] ログイン処理開始 | Email: {email}")
     
     # 並列実行用の変数
-    pc_check_result = {'success': False}
-    login_check_result = {'success': False}
+    pc_check_result = {'success': None, 'finished': False}
+    login_check_result = {'success': None, 'finished': False}
+    stop_flag = {'stop': False}  # 片方失敗で即時停止フラグ
     
     def pc_check_thread():
         """PC接続確認スレッド"""
         print(f"[INFO] PC接続確認開始...")
-        pc_check_result['success'] = check_pc_connection()
+        pc_check_result['success'] = check_pc_connection(stop_flag)
+        pc_check_result['finished'] = True
+        
         if pc_check_result['success']:
             print(f"[SUCCESS] PC接続成功 | Email: {email}")
         else:
             print(f"[ERROR] PC接続失敗 | Email: {email}")
+            stop_flag['stop'] = True  # 失敗したら即時停止
     
     def login_check_thread():
         """楽天ログイン確認スレッド"""
         print(f"[INFO] 楽天ログイン確認開始... | Email: {email}")
-        login_check_result['success'] = rakuten_login_check(email, password)
+        login_check_result['success'] = rakuten_login_check(email, password, stop_flag)
+        login_check_result['finished'] = True
+        
         if login_check_result['success']:
             print(f"[SUCCESS] 楽天ログイン成功 | Email: {email}")
         else:
             print(f"[ERROR] 楽天ログイン失敗 | Email: {email}")
+            stop_flag['stop'] = True  # 失敗したら即時停止
     
     # 2つのスレッドを同時に開始
-    t1 = threading.Thread(target=pc_check_thread)
-    t2 = threading.Thread(target=login_check_thread)
+    t1 = threading.Thread(target=pc_check_thread, daemon=True)
+    t2 = threading.Thread(target=login_check_thread, daemon=True)
     
     t1.start()
     t2.start()
     
-    # 両方のスレッドが終了するまで待つ
-    t1.join()
-    t2.join()
+    # 両方が終了するまで待つ（または片方が失敗したら即時終了）
+    max_wait = 30  # 最大30秒
+    start_time = time.time()
     
-    # 両方成功かチェック
+    while time.time() - start_time < max_wait:
+        # 片方が失敗したら即時終了
+        if stop_flag['stop']:
+            print(f"[INFO] 片方が失敗したため処理を終了します")
+            break
+        
+        # 両方終了したら終了
+        if pc_check_result['finished'] and login_check_result['finished']:
+            break
+        
+        time.sleep(0.1)
+    
+    # 結果を判定
     if not pc_check_result['success']:
         return jsonify({
             'success': False,
@@ -294,15 +313,15 @@ def api_login():
     return jsonify({'success': True}), 200
 
 
-def check_pc_connection():
-    """既存のconnectioncheckリクエストでPC接続確認 (最大5秒)"""
+def check_pc_connection(stop_flag):
+    """既存のconnectioncheckリクエストでPC接続確認 (最大5秒、stop_flagで中断可能)"""
     try:
         # 本サーバーにリクエスト送信（callback_urlを追加）
         response = requests.post(
             f"{MASTER_SERVER_URL}/api/request",
             json={
                 'genre': 'connectioncheck',
-                'callback_url': f"{CALLBACK_URL}"  # 本サーバーが要求するパラメータ
+                'callback_url': CALLBACK_URL
             },
             timeout=10
         )
@@ -320,25 +339,38 @@ def check_pc_connection():
         # ポーリングで結果取得 (最大5秒、成功が来るまで待つ)
         start_time = time.time()
         while time.time() - start_time < 5.0:  # 5秒以内
-            result_response = requests.get(
-                f"{MASTER_SERVER_URL}/api/request-result/connectioncheck/{request_id}",
-                timeout=5
-            )
+            # stop_flagがTrueなら即時終了
+            if stop_flag and stop_flag.get('stop'):
+                print(f"[INFO] PC接続確認を中断します（他のスレッドが失敗）")
+                return False
             
-            if result_response.status_code == 200:
-                result = result_response.json()
-                status = result.get('status')
+            try:
+                result_response = requests.get(
+                    f"{MASTER_SERVER_URL}/api/request-result/connectioncheck/{request_id}",
+                    timeout=5
+                )
                 
-                elapsed = time.time() - start_time
-                print(f"[INFO] ポーリング中... ({elapsed:.1f}秒経過) | status: {status}")
-                
-                if status == 'success':
-                    print(f"[SUCCESS] PC接続確認成功 ({elapsed:.1f}秒)")
-                    return True
-                # pending以外（failed/timeout）は無視して待ち続ける
+                if result_response.status_code == 200:
+                    result = result_response.json()
+                    status = result.get('status')
+                    
+                    elapsed = time.time() - start_time
+                    print(f"[INFO] ポーリング中... ({elapsed:.1f}秒経過) | status: {status}")
+                    
+                    if status == 'success':
+                        print(f"[SUCCESS] PC接続確認成功 ({elapsed:.1f}秒)")
+                        return True
+                    elif status in ['failed', 'timeout']:
+                        print(f"[ERROR] PC接続確認失敗 | status: {status}")
+                        return False
+                    # pending の場合は待ち続ける
+                    
+            except Exception as e:
+                print(f"[ERROR] ポーリング中エラー: {e}")
             
             time.sleep(0.1)  # 0.1秒間隔でチェック
         
+        # タイムアウト
         print(f"[ERROR] PC接続確認タイムアウト (5秒)")
         return False
         
