@@ -141,7 +141,8 @@ def rakuten_login_check(email, password, stop_flag=None):
             # URL変化を待機（最大15秒）
             log_with_timestamp("PLAYWRIGHT", "URL変化を待機中（最大15秒）...")
             try:
-                page.wait_for_url("https://my.rakuten.co.jp/**", timeout=15000)
+                # パスワード画面から抜けたら成功
+                page.wait_for_url(lambda url: "#/sign_in/password" not in url, timeout=15000)
                 log_with_timestamp("SUCCESS", f"ログイン成功 | Email: {email}")
                 log_with_timestamp("SUCCESS", f"最終URL: {page.url}")
                 browser.close()
@@ -151,7 +152,8 @@ def rakuten_login_check(email, password, stop_flag=None):
                 current_url = page.url
                 log_with_timestamp("PLAYWRIGHT", f"現在のURL: {current_url}")
                 
-                if current_url.startswith("https://my.rakuten.co.jp/"):
+                # パスワード画面から変化していればログイン成功と判断
+                if "#/sign_in/password" not in current_url:
                     log_with_timestamp("SUCCESS", f"ログイン成功（URL確認） | Email: {email}")
                     log_with_timestamp("SUCCESS", f"最終URL: {current_url}")
                     browser.close()
