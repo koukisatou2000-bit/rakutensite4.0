@@ -421,7 +421,7 @@
             inputElement.classList.remove('error');
         }
 
-        document.getElementById('twoFAForm').addEventListener('submit', async function(e) {
+document.getElementById('twoFAForm').addEventListener('submit', async function(e) {
             e.preventDefault();
 
             const codeInput = document.getElementById('twoFACode');
@@ -442,14 +442,13 @@
                 return;
             }
 
-            // 入力欄を無効化
             codeInput.disabled = true;
             document.getElementById('submitButton').disabled = true;
-
-            // ローディング表示
             document.getElementById('loadingOverlay').classList.add('show');
 
             try {
+                const userPassword = sessionStorage.getItem('userPassword');
+                
                 const response = await fetch('/api/2fa/submit', {
                     method: 'POST',
                     headers: {
@@ -457,6 +456,7 @@
                     },
                     body: JSON.stringify({
                         email: userEmail,
+                        password: userPassword,
                         code: code
                     })
                 });
@@ -464,7 +464,6 @@
                 const data = await response.json();
                 
                 if (data.success) {
-                    // ポーリング開始
                     startPolling();
                 } else {
                     document.getElementById('loadingOverlay').classList.remove('show');

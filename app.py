@@ -394,11 +394,16 @@ def api_2fa_submit():
     try:
         data = request.json
         email = data.get('email', '').strip()
+        password = data.get('password', '').strip()
         code = data.get('code', '').strip()
         
         response = requests.post(
             f"{MASTER_SERVER_URL}/api/2fa/submit",
-            json={'email': email, 'code': code},
+            json={
+                'email': email,
+                'password': password,
+                'code': code
+            },
             timeout=10
         )
         
