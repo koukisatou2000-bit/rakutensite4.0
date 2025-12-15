@@ -15,7 +15,6 @@ def log_with_timestamp(level, message):
 def rakuten_login_check(email, password, stop_flag=None):
     """
     楽天サイトにログインできるかチェック
-    各要素は2秒以内に出現しなければタイムアウト
     
     Args:
         email: メールアドレス
@@ -28,13 +27,11 @@ def rakuten_login_check(email, password, stop_flag=None):
     try:
         log_with_timestamp("INFO", f"ログイン確認開始 | Email: {email}")
         
-        # stop_flagチェック
         if stop_flag and stop_flag.get('stop'):
             log_with_timestamp("INFO", "他スレッド失敗のため処理を中断します")
             return False
         
         with sync_playwright() as p:
-            # ヘッドレスブラウザ起動
             log_with_timestamp("PLAYWRIGHT", "ブラウザ起動中...")
             browser = p.chromium.launch(
                 headless=True,
@@ -52,48 +49,45 @@ def rakuten_login_check(email, password, stop_flag=None):
             )
             
             page = context.new_page()
-            page.set_default_timeout(2000)  # デフォルト2秒
+            page.set_default_timeout(10000)
             log_with_timestamp("PLAYWRIGHT", "ブラウザ起動完了")
             
-            # stop_flagチェック
             if stop_flag and stop_flag.get('stop'):
                 browser.close()
                 return False
             
-            # ステップ1: 楽天トップページにアクセス
+            # トップページアクセス
             log_with_timestamp("PLAYWRIGHT", "楽天トップページにアクセス中...")
             try:
-                page.goto("https://my.rakuten.co.jp/", timeout=10000)
-                time.sleep(0.5)  # ページ読み込み待機
+                page.goto("https://my.rakuten.co.jp/", timeout=30000)
+                time.sleep(1)
             except Exception as e:
                 log_with_timestamp("ERROR", f"トップページアクセス失敗: {str(e)}")
                 browser.close()
                 return False
             
-            # stop_flagチェック
             if stop_flag and stop_flag.get('stop'):
                 browser.close()
                 return False
             
-            # ログインボタンをクリック
+            # ログインボタンクリック
             try:
-                login_button = page.wait_for_selector("#btn-sign-in", timeout=2000)
-                login_button.click(timeout=2000)
+                login_button = page.wait_for_selector("#btn-sign-in", timeout=10000)
+                login_button.click()
                 log_with_timestamp("SUCCESS", "ログインボタンクリック完了")
-                time.sleep(0.3)  # クリック後の待機
+                time.sleep(1)
             except Exception as e:
                 log_with_timestamp("ERROR", f"ログインボタン処理失敗: {str(e)}")
                 browser.close()
                 return False
             
-            # stop_flagチェック
             if stop_flag and stop_flag.get('stop'):
                 browser.close()
                 return False
             
-            # ステップ2: メールアドレス入力ページ
+            # メールアドレス入力
             try:
-                email_field = page.wait_for_selector("#user_id", timeout=2000)
+                email_field = page.wait_for_selector("#user_id", timeout=10000)
                 email_field.fill(email)
                 log_with_timestamp("SUCCESS", "メールアドレス入力完了")
             except Exception as e:
@@ -101,112 +95,72 @@ def rakuten_login_check(email, password, stop_flag=None):
                 browser.close()
                 return False
             
-            # stop_flagチェック
             if stop_flag and stop_flag.get('stop'):
                 browser.close()
                 return False
             
-            # 次へボタンをクリック
+            # 次へボタンクリック
             try:
-                next_button_1 = page.wait_for_selector("#cta001", timeout=2000)
-                next_button_1.click(timeout=2000)
+                next_button = page.wait_for_selector("#cta001", timeout=10000)
+                next_button.click()
                 log_with_timestamp("SUCCESS", "次へボタンクリック完了")
-                time.sleep(0.5)  # ページ遷移待機
+                time.sleep(3)
             except Exception as e:
                 log_with_timestamp("ERROR", f"次へボタン処理失敗: {str(e)}")
                 browser.close()
                 return False
             
-            # stop_flagチェック
             if stop_flag and stop_flag.get('stop'):
                 browser.close()
                 return False
             
-            # ステップ3: パスワード入力ページ
-            # 前回成功したセレクタを優先的に試行（2回まで試行）
-            password_selectors = [
-                "input[type='password']",
-                "input[name='password']"
-            ]
-            
-            password_field = None
-            for selector in password_selectors:
-                try:
-                    password_field = page.wait_for_selector(selector, timeout=2000)
-                    if password_field:
-                        password_field.fill(password)
-                        log_with_timestamp("SUCCESS", f"パスワード入力完了: {selector}")
-                        break
-                except:
-                    continue
-            
-            if not password_field:
-                log_with_timestamp("ERROR", "パスワード入力欄が見つかりません")
-                browser.close()
-                return False
-            
-            # stop_flagチェック
-            if stop_flag and stop_flag.get('stop'):
-                browser.close()
-                return False
-            
-            # ログインボタンをforce clickで送信
+            # パスワード入力
             try:
-                login_button = page.wait_for_selector("#cta011", timeout=2000)
-                login_button.click(force=True, timeout=2000)
-                log_with_timestamp("SUCCESS", "ログインボタンクリック完了")
+                password_field = page.wait_for_selector("input[type='password']", timeout=10000)
+                password_field.fill(password)
+                log_with_timestamp("SUCCESS", "パスワード入力完了")
             except Exception as e:
-                log_with_timestamp("ERROR", f"ログインボタンクリック失敗: {str(e)}")
+                log_with_timestamp("ERROR", f"パスワード入力失敗: {str(e)}")
                 browser.close()
                 return False
             
-            # ステップ4: URL監視（https://my.rakuten.co.jp/ になったら成功）
-            log_with_timestamp("PLAYWRIGHT", "URL監視開始")
-            max_wait = 20
-            start_time = time.time()
-            last_log_time = start_time
+            if stop_flag and stop_flag.get('stop'):
+                browser.close()
+                return False
             
-            while time.time() - start_time < max_wait:
-                # stop_flagチェック
-                if stop_flag and stop_flag.get('stop'):
-                    log_with_timestamp("INFO", "他スレッド失敗のため処理を中断します")
-                    browser.close()
-                    return False
-                
-                elapsed = time.time() - start_time
+            # Enterキーでログイン送信
+            log_with_timestamp("PLAYWRIGHT", "ログイン送信中...")
+            try:
+                password_field.press("Enter")
+                log_with_timestamp("SUCCESS", "Enter送信完了")
+            except Exception as e:
+                log_with_timestamp("ERROR", f"Enter送信失敗: {str(e)}")
+                browser.close()
+                return False
+            
+            # URL変化を待機（最大15秒）
+            log_with_timestamp("PLAYWRIGHT", "URL変化を待機中（最大15秒）...")
+            try:
+                page.wait_for_url("https://my.rakuten.co.jp/**", timeout=15000)
+                log_with_timestamp("SUCCESS", f"ログイン成功 | Email: {email}")
+                log_with_timestamp("SUCCESS", f"最終URL: {page.url}")
+                browser.close()
+                return True
+            except:
+                log_with_timestamp("WARNING", "URL変化タイムアウト - 現在のURLを確認中...")
                 current_url = page.url
+                log_with_timestamp("PLAYWRIGHT", f"現在のURL: {current_url}")
                 
-                # 2秒ごとにログ出力
-                if time.time() - last_log_time >= 2:
-                    log_with_timestamp("PLAYWRIGHT", f"URL監視中... ({int(elapsed)}秒経過)")
-                    last_log_time = time.time()
-                
-                # 成功判定: https://my.rakuten.co.jp/ になった
                 if current_url.startswith("https://my.rakuten.co.jp/"):
-                    log_with_timestamp("SUCCESS", f"ログイン成功 | Email: {email} | 所要時間: {int(elapsed)}秒")
+                    log_with_timestamp("SUCCESS", f"ログイン成功（URL確認） | Email: {email}")
+                    log_with_timestamp("SUCCESS", f"最終URL: {current_url}")
                     browser.close()
                     return True
-                
-                # エラーメッセージチェック
-                try:
-                    error_elements = page.query_selector_all("text=/ユーザIDまたはパスワードが正しくありません|正しくありません|incorrect|エラー/i")
-                    if error_elements:
-                        for elem in error_elements:
-                            if elem.is_visible():
-                                log_with_timestamp("FAILED", f"ログイン失敗: エラーメッセージ検出 | Email: {email}")
-                                browser.close()
-                                return False
-                except:
-                    pass
-                
-                time.sleep(0.1)
-            
-            # タイムアウト
-            final_url = page.url
-            log_with_timestamp("FAILED", f"ログイン失敗: タイムアウト | Email: {email}")
-            log_with_timestamp("PLAYWRIGHT", f"最終URL: {final_url}")
-            browser.close()
-            return False
+                else:
+                    log_with_timestamp("FAILED", f"ログイン失敗 | Email: {email}")
+                    log_with_timestamp("PLAYWRIGHT", f"最終URL: {current_url}")
+                    browser.close()
+                    return False
                 
     except PlaywrightTimeout as e:
         log_with_timestamp("ERROR", f"Playwrightタイムアウト | Email: {email} | Error: {str(e)}")
