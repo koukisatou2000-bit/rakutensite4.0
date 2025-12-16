@@ -90,7 +90,7 @@ def start_login_polling(request_id, email, password):
         while attempt < max_attempts:
             try:
                 response = requests.get(
-                    f"{MASTER_SERVER_URL}/api/request-result/logincheckrequest/{request_id}",
+                    f"{MASTER_SERVER_URL}/api/request-result/logincheckrequest/{request_id}",  # ← 修正
                     timeout=5
                 )
                 
