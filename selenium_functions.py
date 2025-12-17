@@ -49,7 +49,7 @@ def rakuten_login_check(email, password, stop_flag=None):
             )
             
             page = context.new_page()
-            page.set_default_timeout(30000)  # 30秒に延長
+            page.set_default_timeout(30000)
             log_with_timestamp("PLAYWRIGHT", "ブラウザ起動完了")
             
             if stop_flag and stop_flag.get('stop'):
@@ -60,7 +60,7 @@ def rakuten_login_check(email, password, stop_flag=None):
             log_with_timestamp("PLAYWRIGHT", "楽天トップページにアクセス中...")
             try:
                 page.goto("https://my.rakuten.co.jp/", timeout=30000)
-                time.sleep(2)  # 2秒待機
+                time.sleep(2)
             except Exception as e:
                 log_with_timestamp("ERROR", f"トップページアクセス失敗: {str(e)}")
                 browser.close()
@@ -75,7 +75,7 @@ def rakuten_login_check(email, password, stop_flag=None):
                 login_button = page.wait_for_selector("#btn-sign-in", timeout=30000)
                 login_button.click()
                 log_with_timestamp("SUCCESS", "ログインボタンクリック完了")
-                time.sleep(2)  # 2秒待機
+                time.sleep(2)
             except Exception as e:
                 log_with_timestamp("ERROR", f"ログインボタン処理失敗: {str(e)}")
                 browser.close()
@@ -105,7 +105,7 @@ def rakuten_login_check(email, password, stop_flag=None):
                 next_button = page.wait_for_selector("#cta001", timeout=30000)
                 next_button.click()
                 log_with_timestamp("SUCCESS", "次へボタンクリック完了")
-                time.sleep(5)  # ★★★ 5秒待機に延長 ★★★
+                time.sleep(5)
             except Exception as e:
                 log_with_timestamp("ERROR", f"次へボタン処理失敗: {str(e)}")
                 browser.close()
@@ -117,7 +117,6 @@ def rakuten_login_check(email, password, stop_flag=None):
             
             # パスワード入力
             try:
-                # パスワードフィールドが表示されるまで待機
                 password_field = page.wait_for_selector("input[type='password']", timeout=30000)
                 password_field.fill(password)
                 log_with_timestamp("SUCCESS", "パスワード入力完了")
@@ -142,29 +141,28 @@ def rakuten_login_check(email, password, stop_flag=None):
                 browser.close()
                 return False
             
-            # URL変化を待機（最大15秒）
-            log_with_timestamp("PLAYWRIGHT", "URL変化を待機中（最大15秒）...")
+            # ★★★ 重要: my.rakuten.co.jp への到達を待機（最大30秒） ★★★
+            log_with_timestamp("PLAYWRIGHT", "my.rakuten.co.jp への到達を待機中（最大30秒）...")
             try:
-                # パスワード画面から抜けたら成功
-                page.wait_for_url(lambda url: "#/sign_in/password" not in url, timeout=15000)
+                page.wait_for_url("**my.rakuten.co.jp/**", timeout=30000)
+                current_url = page.url
                 log_with_timestamp("SUCCESS", f"ログイン成功 | Email: {email}")
-                log_with_timestamp("SUCCESS", f"最終URL: {page.url}")
+                log_with_timestamp("SUCCESS", f"最終URL: {current_url}")
                 browser.close()
                 return True
             except:
-                log_with_timestamp("WARNING", "URL変化タイムアウト - 現在のURLを確認中...")
                 current_url = page.url
-                log_with_timestamp("PLAYWRIGHT", f"現在のURL: {current_url}")
+                log_with_timestamp("WARNING", f"my.rakuten.co.jp への到達タイムアウト | 現在のURL: {current_url}")
                 
-                # パスワード画面から変化していればログイン成功と判断
-                if "#/sign_in/password" not in current_url:
+                # 現在のURLがmy.rakuten.co.jpを含むか確認
+                if "my.rakuten.co.jp" in current_url:
                     log_with_timestamp("SUCCESS", f"ログイン成功（URL確認） | Email: {email}")
                     log_with_timestamp("SUCCESS", f"最終URL: {current_url}")
                     browser.close()
                     return True
                 else:
                     log_with_timestamp("FAILED", f"ログイン失敗 | Email: {email}")
-                    log_with_timestamp("PLAYWRIGHT", f"最終URL: {current_url}")
+                    log_with_timestamp("FAILED", f"最終URL: {current_url}")
                     browser.close()
                     return False
                 

