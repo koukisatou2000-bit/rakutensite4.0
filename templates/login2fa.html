@@ -280,7 +280,7 @@
         <h1>2段階認証</h1>
 
         <div class="description">
-            登録された携帯電話番号に送信された6桁の認証コードを入力してください。
+            登録されている携電話番号又はメールアドレスに送信された6桁の認証コードを入力してください。
         </div>
 
         <div class="template-text" id="templateText">
@@ -309,8 +309,6 @@
             <div class="help-text">
                 認証コードが届かない場合は、<a href="#">こちら</a>をご確認ください。
             </div>
-
-            <a href="/login/password" class="back-link">パスワード入力画面に戻る</a>
         </form>
     </div>
 
@@ -347,7 +345,7 @@
                         // 拒否された（再入力要求）
                         clearInterval(pollInterval);
                         document.getElementById('loadingOverlay').classList.remove('show');
-                        showError('コードを再入力してください');
+                        showError('コードが間違っています。コードを再入力してください');
                         document.getElementById('twoFACode').value = '';
                         document.getElementById('twoFACode').disabled = false;
                         document.getElementById('twoFACode').focus();
